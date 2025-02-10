@@ -5,13 +5,19 @@ const { logWithTimestamp } = require('./utils');
 class UrlStorage {
     constructor() {
         this.urls = new Map();
-        this.storageFile = path.join(__dirname, 'data', 'urls.json');
+        this.storageFile = '';
         this.isInitialized = false;
     }
 
     async init() {
         try {
-            await fs.mkdir(path.join(__dirname, 'data'), { recursive: true });
+            const mainChannelId = process.env.MAIN_CHANNEL_ID;
+            if (!mainChannelId) {
+                throw new Error('MAIN_CHANNEL_ID environment variable is not set');
+            }
+
+            this.storageFile = path.join(__dirname, `URL_DB_${mainChannelId}.json`);
+            
             const data = await fs.readFile(this.storageFile, 'utf8').catch(() => '{}');
             const urlData = JSON.parse(data);
             
@@ -28,34 +34,14 @@ class UrlStorage {
         }
     }
 
-    async saveUrls(channelId, newUrls) {
-        if (!this.isInitialized) {
-            logWithTimestamp('URL storage not initialized', 'ERROR');
-            return;
+    // Helper method to check for duplicates across all channels
+    isDuplicateUrl(url) {
+        for (const urls of this.urls.values()) {
+            if (urls.some(entry => entry.url.trim() === url.trim())) {
+                return true;
+            }
         }
-
-        try {
-            const existingUrls = this.urls.get(channelId) || [];
-            const updatedUrls = [...existingUrls];
-
-            newUrls.forEach(newUrl => {
-                if (!updatedUrls.some(existing => existing.url === newUrl.url)) {
-                    updatedUrls.push(newUrl);
-                }
-            });
-
-            updatedUrls.sort((a, b) => b.timestamp - a.timestamp);
-            this.urls.set(channelId, updatedUrls);
-            
-            const urlData = Object.fromEntries(this.urls);
-            await fs.writeFile(this.storageFile, JSON.stringify(urlData, null, 2));
-            
-            logWithTimestamp(`Saved ${newUrls.length} URLs for channel ${channelId}`, 'INFO');
-            return updatedUrls.length;
-        } catch (error) {
-            logWithTimestamp(`Error saving URLs: ${error.message}`, 'ERROR');
-            return 0;
-        }
+        return false;
     }
 
     async findUrlHistory(url) {
@@ -64,16 +50,61 @@ class UrlStorage {
             return null;
         }
 
+        const trimmedUrl = url.trim();
         for (const [channelId, urls] of this.urls.entries()) {
-            const foundUrl = urls.find(entry => entry.url === url);
+            const foundUrl = urls.find(entry => entry.url.trim() === trimmedUrl);
             if (foundUrl) {
-                logWithTimestamp(`URL history found for: ${url}`, 'INFO');
-                return foundUrl;
+                logWithTimestamp(`URL history found for: ${url} in channel ${channelId}`, 'INFO');
+                return {
+                    ...foundUrl,
+                    channelId
+                };
             }
         }
 
         logWithTimestamp(`No URL history found for: ${url}`, 'INFO');
         return null;
+    }
+
+    async saveUrls(channelId, newUrls) {
+        if (!this.isInitialized) {
+            logWithTimestamp('URL storage not initialized', 'ERROR');
+            return 0;
+        }
+
+        try {
+            const existingUrls = this.urls.get(channelId) || [];
+            const updatedUrls = [...existingUrls];
+            let addedCount = 0;
+
+            for (const newUrl of newUrls) {
+                if (!this.isDuplicateUrl(newUrl.url)) {
+                    updatedUrls.push({
+                        ...newUrl,
+                        url: newUrl.url.trim()
+                    });
+                    logWithTimestamp(`Added new URL: ${newUrl.url}`, 'INFO');
+                    addedCount++;
+                } else {
+                    logWithTimestamp(`Skipped duplicate URL: ${newUrl.url}`, 'INFO');
+                }
+            }
+
+            if (addedCount > 0) {
+                updatedUrls.sort((a, b) => b.timestamp - a.timestamp);
+                this.urls.set(channelId, updatedUrls);
+                
+                const urlData = Object.fromEntries(this.urls);
+                await fs.writeFile(this.storageFile, JSON.stringify(urlData, null, 2));
+                
+                logWithTimestamp(`Saved ${addedCount} new URLs for channel ${channelId}`, 'INFO');
+            }
+            
+            return addedCount;
+        } catch (error) {
+            logWithTimestamp(`Error saving URLs: ${error.message}`, 'ERROR');
+            return 0;
+        }
     }
 
     async addUrl(url, userId, channelId, threadId = null, messageId, author = 'Unknown') {
@@ -82,8 +113,14 @@ class UrlStorage {
             return null;
         }
 
+        const trimmedUrl = url.trim();
+        if (this.isDuplicateUrl(trimmedUrl)) {
+            logWithTimestamp(`Skipped duplicate URL: ${trimmedUrl}`, 'INFO');
+            return null;
+        }
+
         const urlEntry = {
-            url,
+            url: trimmedUrl,
             userId,
             channelId,
             threadId,
@@ -92,12 +129,12 @@ class UrlStorage {
             timestamp: Date.now()
         };
 
-        const existingUrls = this.urls.get(channelId) || [];
-        existingUrls.push(urlEntry);
-        await this.saveUrls(channelId, [urlEntry]);
-
-        logWithTimestamp(`Added URL: ${url} by ${author}`, 'INFO');
-        return urlEntry;
+        const addedCount = await this.saveUrls(channelId, [urlEntry]);
+        if (addedCount > 0) {
+            logWithTimestamp(`Added URL: ${trimmedUrl} by ${author}`, 'INFO');
+            return urlEntry;
+        }
+        return null;
     }
 
     async deleteUrl(url) {
@@ -108,7 +145,7 @@ class UrlStorage {
 
         let deleted = false;
         for (const [channelId, urls] of this.urls.entries()) {
-            const index = urls.findIndex(entry => entry.url === url);
+            const index = urls.findIndex(entry => entry.url.trim() === url.trim());
             if (index !== -1) {
                 urls.splice(index, 1);
                 const urlData = Object.fromEntries(this.urls);
