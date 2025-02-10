@@ -1,172 +1,198 @@
-const { EmbedBuilder } = require('discord.js');
-const UrlStore = require('./urlStore');
+const { EmbedBuilder, ChannelType } = require('discord.js');
+const UrlStorage = require('./urlStore');
 const { logWithTimestamp } = require('./utils');
+const { DB_TIMEOUT } = require('./config');
 
 class UrlTracker {
     constructor(client) {
         this.client = client;
-        this.store = new UrlStore();
-        this.urlRegex = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/gi;
+        this.urlStore = new UrlStorage();
+        this.urlRegex = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/g;
     }
 
     async init() {
-        // Initialize the store
-        await this.store.init();
-
-        // Bind message handler
-        this.client.on('messageCreate', this.handleMessage.bind(this));
-
-        // Handle command for fetching links
-        this.client.on('messageCreate', this.handleCommand.bind(this));
-
-        // Validate environment variables
-        this.validateEnv();
-    }
-
-    validateEnv() {
-        const requiredVars = ['MAIN_CHANNEL_ID', 'URL_REPOST_THRESHOLD_HOURS'];
-        const missing = requiredVars.filter(v => !process.env[v]);
-        
-        if (missing.length > 0) {
-            throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
-        }
-
-        // Validate threshold is a positive number
-        const threshold = parseInt(process.env.URL_REPOST_THRESHOLD_HOURS);
-        if (isNaN(threshold) || threshold <= 0) {
-            throw new Error('URL_REPOST_THRESHOLD_HOURS must be a positive number');
-        }
-    }
-
-    async handleMessage(message) {
         try {
-            // Ignore bot messages and commands
-            if (message.author.bot || message.content.startsWith('!')) return;
+            await this.urlStore.init();
+            logWithTimestamp('URL Tracker initialized successfully', 'INFO');
+        } catch (error) {
+            logWithTimestamp(`Failed to initialize URL Tracker: ${error.message}`, 'ERROR');
+            throw error;
+        }
+    }
 
-            // Check if message is in main channel or its threads
-            if (message.channelId !== process.env.MAIN_CHANNEL_ID && 
-                message.channel.parentId !== process.env.MAIN_CHANNEL_ID) {
-                return;
-            }
-
-            // Extract URLs from message
-            const urls = message.content.match(this.urlRegex);
-            if (!urls) return;
-
-            // Process each URL
+    async handleUrlMessage(message, urls) {
+        try {
             for (const url of urls) {
-                await this.processUrl(url, message);
+                const existingUrl = await this.urlStore.findUrlHistory(url);
+                
+                if (existingUrl) {
+                    // Check if the original poster is the same as current author
+                    if (existingUrl.author !== message.author.tag) {
+                        // Different author - not allowed
+                        const embed = new EmbedBuilder()
+                            .setColor('#ff0000')
+                            .setTitle('Only your own content is allowed')
+                            .setDescription(`This URL was previously shared by another user on <t:${Math.floor(new Date(existingUrl.timestamp).getTime() / 1000)}:R>`)
+                            .addFields(
+                                { name: 'Original Poster', value: existingUrl.author || 'Unknown' },
+                                { name: 'URL', value: url }
+                            )
+                            .setFooter({
+                                text: 'Botanix Labs',
+                                iconURL: 'https://a-us.storyblok.com/f/1014909/512x512/026e26392f/dark_512-1.png'
+                            })
+                            .setTimestamp();
+
+                        await message.reply({ embeds: [embed] });
+                    } else {
+                        // Same author - check if same thread
+                        if (existingUrl.channelId !== message.channel.id) {
+                            // Different thread
+                            const embed = new EmbedBuilder()
+                                .setColor('#ff0000')
+                                .setTitle('You have posted this before')
+                                .setDescription(`You shared this URL in a different thread on <t:${Math.floor(new Date(existingUrl.timestamp).getTime() / 1000)}:R>`)
+                                .addFields(
+                                    { name: 'Original Thread', value: `<#${existingUrl.channelId}>` },
+                                    { name: 'URL', value: url }
+                                )
+                                .setFooter({
+                                    text: 'Botanix Labs',
+                                    iconURL: 'https://a-us.storyblok.com/f/1014909/512x512/026e26392f/dark_512-1.png'
+                                })
+                                .setTimestamp();
+
+                            await message.reply({ embeds: [embed] });
+                        } else {
+                            // Same thread - check if original message exists
+                            const originalMessage = await message.channel.messages
+                                .fetch(existingUrl.messageId)
+                                .catch(() => null);
+
+                            if (originalMessage) {
+                                // Original message still exists
+                                const embed = new EmbedBuilder()
+                                    .setColor('#ff0000')
+                                    .setTitle('You have posted this before')
+                                    .setDescription(`You already shared this URL in this thread on <t:${Math.floor(new Date(existingUrl.timestamp).getTime() / 1000)}:R>`)
+                                    .addFields(
+                                        { name: 'Original Message', value: `[Click to view](${originalMessage.url})` },
+                                        { name: 'URL', value: url }
+                                    )
+                                    .setFooter({
+                                        text: 'Botanix Labs',
+                                        iconURL: 'https://a-us.storyblok.com/f/1014909/512x512/026e26392f/dark_512-1.png'
+                                    })
+                                    .setTimestamp();
+
+                                await message.reply({ embeds: [embed] });
+                            } else {
+                                // Original message is gone - delete the entry
+                                await this.urlStore.deleteUrl(url);
+                                logWithTimestamp(`Deleted old URL entry as original message no longer exists: ${url}`, 'INFO');
+                            }
+                        }
+                    }
+                }
+                
+                // Wait for DB_TIMEOUT period before adding to database
+                setTimeout(async () => {
+                    try {
+                        // Fetch the message again to verify it still exists
+                        const messageExists = await message.channel.messages
+                            .fetch(message.id)
+                            .then(() => true)
+                            .catch(() => false);
+
+                        if (messageExists) {
+                            // Only add to database if message still exists
+                            await this.urlStore.addUrl(
+                                url,
+                                message.author.id,
+                                message.channel.id,
+                                message.channel.isThread() ? message.channel.id : null,
+                                message.id,
+                                message.author.tag
+                            );
+                            logWithTimestamp(`URL added after timeout: ${url}`, 'INFO');
+                        } else {
+                            logWithTimestamp(`Message no longer exists, URL not added: ${url}`, 'INFO');
+                        }
+                    } catch (error) {
+                        logWithTimestamp(`Error checking message after timeout: ${error.message}`, 'ERROR');
+                    }
+                }, DB_TIMEOUT);
             }
         } catch (error) {
-            logWithTimestamp(`Error handling message: ${error.message}`, 'ERROR');
+            logWithTimestamp(`Error handling URL message: ${error.message}`, 'ERROR');
         }
     }
 
-    async processUrl(url, message) {
+    async fetchAllUrlsFromChannel(channelId) {
+        const channel = await this.client.channels.fetch(channelId).catch(error => {
+            logWithTimestamp(`Failed to fetch channel: ${error.message}`, 'ERROR');
+            return null;
+        });
+
+        if (!channel) {
+            logWithTimestamp(`Channel not found: ${channelId}`, 'ERROR');
+            return [];
+        }
+
+        let urls = [];
         try {
-            // Check if URL exists in store
-            const urlHistory = await this.store.findUrlHistory(url);
-            
-            if (urlHistory) {
-                const postAge = this.getPostAgeHours(urlHistory.timestamp);
-                const thresholdHours = parseInt(process.env.URL_REPOST_THRESHOLD_HOURS);
-
-                // Changed condition: now checks if original post age is ABOVE threshold
-                if (postAge > thresholdHours) {
-                    // URL is old enough, allow repost but store the new instance
-                    await this.store.addUrl(
-                        url,
-                        message.author.id,
-                        message.channelId,
-                        message.channel.isThread() ? message.channel.id : null
-                    );
-                    return;
-                }
-
-                // If we get here, the original post is still within threshold
-                const isSameUser = urlHistory.userId === message.author.id;
-                const embed = this.createRepostEmbed(urlHistory, message, postAge, isSameUser);
-                await message.reply({ embeds: [embed] });
-
-                // Optional: Delete the reposted message
-                if (message.deletable) {
-                    await message.delete();
-                    logWithTimestamp(`Deleted reposted URL from ${message.author.tag}`, 'MODERATION');
+            if (channel.type === ChannelType.GuildForum) {
+                const threads = await channel.threads.fetch();
+                
+                for (const [threadId, thread] of threads.threads) {
+                    const messages = await thread.messages.fetch({ limit: 100 });
+                    
+                    messages.forEach(message => {
+                        const foundUrls = message.content.match(this.urlRegex);
+                        if (foundUrls) {
+                            foundUrls.forEach(url => {
+                                urls.push({
+                                    url,
+                                    timestamp: message.createdTimestamp,
+                                    author: message.author.tag,
+                                    threadName: thread.name
+                                });
+                            });
+                        }
+                    });
                 }
             } else {
-                // First time this URL is posted
-                await this.store.addUrl(
-                    url,
-                    message.author.id,
-                    message.channelId,
-                    message.channel.isThread() ? message.channel.id : null
-                );
-            }
-        } catch (error) {
-            logWithTimestamp(`Error processing URL: ${error.message}`, 'ERROR');
-        }
-    }
-
-    createRepostEmbed(urlHistory, message, postAge, isSameUser) {
-        return new EmbedBuilder()
-            .setColor(isSameUser ? '#f2b518' : '#ff0000')
-            .setTitle('URL Repost Detection')
-            .setDescription(isSameUser 
-                ? 'You have posted this link previously'
-                : 'Please do not use other\'s content')
-            .addFields(
-                { 
-                    name: 'Original Post', 
-                    value: `Posted ${Math.floor(postAge)} hours ago` +
-                           `\nTime remaining: ${Math.ceil(parseInt(process.env.URL_REPOST_THRESHOLD_HOURS) - postAge)} hours`
-                }
-            )
-            .setFooter({
-                text: 'Botanix Labs',
-                iconURL: 'https://a-us.storyblok.com/f/1014909/512x512/026e26392f/dark_512-1.png'
-            })
-            .setTimestamp();
-    }
-
-    getPostAgeHours(timestamp) {
-        const postDate = new Date(timestamp);
-        const now = new Date();
-        return (now - postDate) / (1000 * 60 * 60); // Convert to hours
-    }
-
-    async handleCommand(message) {
-        if (!message.content.startsWith('!fetch links')) return;
-
-        try {
-            const args = message.content.split(' ');
-            if (args.length !== 3) {
-                await message.reply('Usage: !fetch links <channel_id>');
-                return;
-            }
-
-            const channelId = args[2];
-            const urls = await this.store.fetchChannelUrls(channelId);
-
-            const embed = new EmbedBuilder()
-                .setColor('#0099ff')
-                .setTitle('URL History')
-                .setDescription(`Found ${urls.length} URLs in channel`)
-                .addFields(
-                    urls.slice(0, 10).map(url => ({
-                        name: new Date(url.timestamp).toLocaleString(),
-                        value: `${url.url.substring(0, 100)}${url.url.length > 100 ? '...' : ''}`
-                    }))
-                )
-                .setFooter({
-                    text: `Showing first 10 of ${urls.length} URLs`,
-                    iconURL: 'https://a-us.storyblok.com/f/1014909/512x512/026e26392f/dark_512-1.png'
+                const messages = await channel.messages.fetch({ limit: 100 });
+                
+                messages.forEach(message => {
+                    const foundUrls = message.content.match(this.urlRegex);
+                    if (foundUrls) {
+                        foundUrls.forEach(url => {
+                            urls.push({
+                                url,
+                                timestamp: message.createdTimestamp,
+                                author: message.author.tag
+                            });
+                        });
+                    }
                 });
-
-            await message.reply({ embeds: [embed] });
+            }
         } catch (error) {
-            logWithTimestamp(`Error handling fetch command: ${error.message}`, 'ERROR');
-            await message.reply('An error occurred while fetching URLs');
+            logWithTimestamp(`Error fetching messages: ${error.message}`, 'ERROR');
+            return [];
         }
+
+        urls = urls.filter((url, index, self) =>
+            index === self.findIndex((t) => t.url === url.url)
+        );
+
+        logWithTimestamp(`Fetched ${urls.length} unique URLs from channel ${channelId}`, 'INFO');
+        return urls;
+    }
+
+    shutdown() {
+        logWithTimestamp('URL Tracker shutting down...', 'SHUTDOWN');
+        this.urlStore.shutdown();
     }
 }
 
