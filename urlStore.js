@@ -81,7 +81,10 @@ class UrlStorage {
                 if (!this.isDuplicateUrl(newUrl.url)) {
                     updatedUrls.push({
                         ...newUrl,
-                        url: newUrl.url.trim()
+                        url: newUrl.url.trim(),
+                        messageUrl: newUrl.messageUrl, // Add message URL
+                        userId: newUrl.userId, // Store user ID instead of username
+                        messageId: newUrl.messageId
                     });
                     logWithTimestamp(`Added new URL: ${newUrl.url}`, 'INFO');
                     addedCount++;
@@ -107,7 +110,7 @@ class UrlStorage {
         }
     }
 
-    async addUrl(url, userId, channelId, threadId = null, messageId, author = 'Unknown') {
+    async addUrl(url, userId, channelId, threadId = null, messageId, messageUrl) {
         if (!this.isInitialized) {
             logWithTimestamp('URL storage not initialized', 'ERROR');
             return null;
@@ -125,13 +128,13 @@ class UrlStorage {
             channelId,
             threadId,
             messageId,
-            author,
+            messageUrl,
             timestamp: Date.now()
         };
 
         const addedCount = await this.saveUrls(channelId, [urlEntry]);
         if (addedCount > 0) {
-            logWithTimestamp(`Added URL: ${trimmedUrl} by ${author}`, 'INFO');
+            logWithTimestamp(`Added URL: ${trimmedUrl} by user ID ${userId}`, 'INFO');
             return urlEntry;
         }
         return null;
@@ -216,6 +219,7 @@ class UrlStorage {
         return stats;
     }
 
+0
     shutdown() {
         logWithTimestamp('URL storage shutting down', 'SHUTDOWN');
     }

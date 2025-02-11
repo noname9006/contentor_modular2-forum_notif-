@@ -21,62 +21,42 @@ class UrlTracker {
     }
 
     async handleUrlMessage(message, urls) {
-    try {
-        for (const url of urls) {
-            logWithTimestamp(`Checking URL: ${url}`, 'INFO');
-            const existingUrl = await this.urlStore.findUrlHistory(url);
-            
-            if (existingUrl) {
-                logWithTimestamp(`Found existing URL: ${url} from author: ${existingUrl.author}`, 'INFO');
+        try {
+            for (const url of urls) {
+                logWithTimestamp(`Checking URL: ${url}`, 'INFO');
+                const existingUrl = await this.urlStore.findUrlHistory(url);
                 
-                // Check if the original poster is the same as current author
-                if (existingUrl.author !== message.author.tag) {
-                    // Different author - not allowed
-                    const embed = new EmbedBuilder()
-                        .setColor('#ff0000')
-                        .setTitle("Please don't try to use others content as your own")
-                        .setDescription(`This content has already been shared by another user`)
-                        .addFields(
-                         { name: 'Original Message:', value: ` ` },
-                         )                       
-                        .setFooter({
-                            text: 'Botanix Labs',
-                            iconURL: 'https://a-us.storyblok.com/f/1014909/512x512/026e26392f/dark_512-1.png'
-                        })
-                        .setTimestamp();
+                if (existingUrl) {
+                    logWithTimestamp(`Found existing URL: ${url} from user ID: ${existingUrl.userId}`, 'INFO');
+                    
+                    // Check if the original message still exists
+                    const originalChannel = await this.client.channels.fetch(existingUrl.channelId);
+                    let originalMessageExists = false;
+                    
+                    if (originalChannel) {
+                        try {
+                            await originalChannel.messages.fetch(existingUrl.messageId);
+                            originalMessageExists = true;
+                        } catch (error) {
+                            // Message doesn't exist anymore
+                            logWithTimestamp(`Original message no longer exists, removing entry for URL: ${url}`, 'INFO');
+                            await this.urlStore.deleteUrl(url);
+                            // Continue processing as a new entry
+                            originalMessageExists = false;
+                        }
+                    }
 
-                    await message.reply({ embeds: [embed] });
-                    logWithTimestamp(`Sent duplicate URL notification for: ${url}`, 'INFO');
-                } else {
-                    // Same author - check if same thread
-                    if (existingUrl.channelId !== message.channel.id) {
-                        // Different thread
-                        const embed = new EmbedBuilder()
-                            .setColor('#ff0000')
-                            .setTitle('You have posted this before')
-                            .setDescription(`You have already shared this content`)
-                            
-                            .setFooter({
-                                text: 'Botanix Labs',
-                                iconURL: 'https://a-us.storyblok.com/f/1014909/512x512/026e26392f/dark_512-1.png'
-                            })
-                            .setTimestamp();
-
-                        await message.reply({ embeds: [embed] });
-                        logWithTimestamp(`Sent same-author different-thread notification for: ${url}`, 'INFO');
-                    } else {
-                        // Same thread - check if original message exists
-                        const originalMessage = await message.channel.messages
-                            .fetch(existingUrl.messageId)
-                            .catch(() => null);
-
-                        if (originalMessage) {
-                            // Original message still exists
+                    if (originalMessageExists) {
+                        // Check if the original poster is the same as current author
+                        if (existingUrl.userId !== message.author.id) {
+                            // Different author - not allowed
                             const embed = new EmbedBuilder()
                                 .setColor('#ff0000')
-                                .setTitle('You have posted this before')
-                                .setDescription(`You have already shared this content`)
-                                
+                                .setTitle("Please don't try to use others content as your own")
+                                .setDescription(`This content has already been shared by another user`)
+                                .addFields(
+                                    { name: 'Original Message:', value: existingUrl.messageUrl || 'Not available' }
+                                )
                                 .setFooter({
                                     text: 'Botanix Labs',
                                     iconURL: 'https://a-us.storyblok.com/f/1014909/512x512/026e26392f/dark_512-1.png'
@@ -84,20 +64,43 @@ class UrlTracker {
                                 .setTimestamp();
 
                             await message.reply({ embeds: [embed] });
-                            logWithTimestamp(`Sent same-thread notification for: ${url}`, 'INFO');
+                            logWithTimestamp(`Sent duplicate URL notification for: ${url}`, 'INFO');
                         } else {
-                            // Original message is gone - delete the entry
-                            await this.urlStore.deleteUrl(url);
-                            logWithTimestamp(`Deleted old URL entry as original message no longer exists: ${url}`, 'INFO');
+                            // Same author - check if same thread
+                            if (existingUrl.channelId !== message.channel.id) {
+                                // Different thread
+                                const embed = createDuplicateEmbed('You have posted this before', 'You have already shared this content');
+                                await message.reply({ embeds: [embed] });
+                                logWithTimestamp(`Sent same-author different-thread notification for: ${url}`, 'INFO');
+                            }
                         }
+                    } else {
+                        // Original message is gone - add new entry
+                        await this.addNewUrlEntry(message, url);
                     }
+                } else {
+                    // New URL - add entry
+                    await this.addNewUrlEntry(message, url);
                 }
             }
+        } catch (error) {
+            logWithTimestamp(`Error handling URL message: ${error.message}`, 'ERROR');
         }
-    } catch (error) {
-        logWithTimestamp(`Error handling URL message: ${error.message}`, 'ERROR');
     }
-}
+
+    async addNewUrlEntry(message, url) {
+        const messageUrl = `https://discord.com/channels/${message.guild.id}/${message.channel.id}/${message.id}`;
+        await this.urlStore.addUrl(
+            url,
+            message.author.id,
+            message.channel.id,
+            message.channel.isThread() ? message.channel.id : null,
+            message.id,
+            messageUrl
+        );
+        logWithTimestamp(`Added new URL entry: ${url} from user ID ${message.author.id}`, 'INFO');
+    }
+    
 
     async fetchAllUrlsFromChannel(channelId) {
         const channel = await this.client.channels.fetch(channelId).catch(error => {

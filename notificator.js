@@ -437,24 +437,27 @@ client.on('messageCreate', async (message) => {
 
             const urls = message.content.match(urlTracker.urlRegex);
             if (urls) {
-                setTimeout(async () => {
-                    const messageExists = await checkMessageExists(message);
-                    if (messageExists) {
-                        await urlTracker.handleUrlMessage(message, urls);
-                        
-                        // Store URLs in the storage
-                        const urlsToStore = urls.map(url => ({
-                            url,
-                            timestamp: message.createdTimestamp,
-                            author: message.author.tag,
-                            threadName: message.channel.name
-                        }));
-                        await urlStore.saveUrls(message.channel.id, urlsToStore);
-                    } else {
-                        logWithTimestamp(`Message ${message.id} no longer exists, skipping URL check`, 'INFO');
-                    }
-                }, URL_CHECK_TIMEOUT);
-            }
+    setTimeout(async () => {
+        const messageExists = await checkMessageExists(message);
+        if (messageExists) {
+            await urlTracker.handleUrlMessage(message, urls);
+            
+            // Store URLs in the storage with message URL
+            const messageUrl = `https://discord.com/channels/${message.guild.id}/${message.channel.id}/${message.id}`;
+            const urlsToStore = urls.map(url => ({
+                url,
+                timestamp: message.createdTimestamp,
+                userId: message.author.id,
+                threadName: message.channel.name,
+                messageId: message.id,
+                messageUrl: messageUrl
+            }));
+            await urlStore.saveUrls(message.channel.id, urlsToStore);
+        } else {
+            logWithTimestamp(`Message ${message.id} no longer exists, skipping URL check`, 'INFO');
+        }
+    }, URL_CHECK_TIMEOUT);
+}
         } finally {
             threadNameData.done();
         }
