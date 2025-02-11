@@ -1,4 +1,4 @@
-const fs = require('fs').promises;
+const fs = require('fs/promises');
 const path = require('path');
 const { logWithTimestamp } = require('./utils');
 
@@ -10,36 +10,29 @@ class UrlStorage {
     }
 
     async init() {
-    try {
-        const mainChannelId = process.env.MAIN_CHANNEL_ID;
-        if (!mainChannelId) {
-            throw new Error('MAIN_CHANNEL_ID environment variable is not set');
-        }
+        try {
+            const mainChannelId = process.env.MAIN_CHANNEL_ID;
+            if (!mainChannelId) {
+                throw new Error('MAIN_CHANNEL_ID environment variable is not set');
+            }
 
-        this.storageFile = path.join(__dirname, `URL_DB_${mainChannelId}.json`);
-        
-        // Test write permissions
-        await fs.access(path.dirname(this.storageFile), fs.constants.W_OK)
-            .catch(() => {
-                throw new Error(`No write permission to directory: ${path.dirname(this.storageFile)}`);
-            });
+            this.storageFile = path.join(__dirname, `URL_DB_${mainChannelId}.json`);
             
-        const data = await fs.readFile(this.storageFile, 'utf8').catch(() => '{}');
-        const urlData = JSON.parse(data);
-        
-        for (const [channelId, urls] of Object.entries(urlData)) {
-            this.urls.set(channelId, urls);
+            const data = await fs.readFile(this.storageFile, 'utf8').catch(() => '{}');
+            const urlData = JSON.parse(data);
+            
+            for (const [channelId, urls] of Object.entries(urlData)) {
+                this.urls.set(channelId, urls);
+            }
+            
+            this.isInitialized = true;
+            logWithTimestamp('URL storage initialized', 'STARTUP');
+        } catch (error) {
+            logWithTimestamp(`Error initializing URL storage: ${error.message}`, 'ERROR');
+            this.urls = new Map();
+            this.isInitialized = false;
         }
-        
-        this.isInitialized = true;
-        logWithTimestamp(`URL storage initialized at ${this.storageFile}`, 'STARTUP');
-    } catch (error) {
-        logWithTimestamp(`Error initializing URL storage: ${error.message}`, 'ERROR');
-        this.urls = new Map();
-        this.isInitialized = false;
-        throw error;  // Propagate the error
     }
-}
 
     // Helper method to check for duplicates across all channels
     isDuplicateUrl(url) {
@@ -74,50 +67,46 @@ class UrlStorage {
     }
 
     async saveUrls(channelId, newUrls) {
-        if (!this.isInitialized) {
-            logWithTimestamp('URL storage not initialized', 'ERROR');
-            return 0;
-        }
-
-        try {
-            const existingUrls = this.urls.get(channelId) || [];
-            const updatedUrls = [...existingUrls];
-            let addedCount = 0;
-
-            for (const newUrl of newUrls) {
-                if (!this.isDuplicateUrl(newUrl.url)) {
-                    updatedUrls.push({
-                        ...newUrl,
-                        url: newUrl.url.trim(),
-                        messageUrl: newUrl.messageUrl, // Add message URL
-                        userId: newUrl.userId, // Store user ID instead of username
-                        messageId: newUrl.messageId
-                    });
-                    logWithTimestamp(`Added new URL: ${newUrl.url}`, 'INFO');
-                    addedCount++;
-                } else {
-                    logWithTimestamp(`Skipped duplicate URL: ${newUrl.url}`, 'INFO');
-                }
-            }
-
-            if (addedCount > 0) {
-                updatedUrls.sort((a, b) => b.timestamp - a.timestamp);
-                this.urls.set(channelId, updatedUrls);
-                
-                const urlData = Object.fromEntries(this.urls);
-                await fs.writeFile(this.storageFile, JSON.stringify(urlData, null, 2));
-                
-                logWithTimestamp(`Saved ${addedCount} new URLs for channel ${channelId}`, 'INFO');
-            }
-            
-            return addedCount;
-        } catch (error) {
-            logWithTimestamp(`Error saving URLs: ${error.message}`, 'ERROR');
-            return 0;
-        }
+    if (!this.isInitialized) {
+        logWithTimestamp('URL storage not initialized', 'ERROR');
+        return 0;
     }
 
-    async addUrl(url, userId, channelId, threadId = null, messageId, messageUrl) {
+    try {
+        const existingUrls = this.urls.get(channelId) || [];
+        const updatedUrls = [...existingUrls];
+        let addedCount = 0;
+
+        for (const newUrl of newUrls) {
+            updatedUrls.push({
+                ...newUrl,
+                url: newUrl.url.trim(),
+                messageUrl: newUrl.messageUrl,
+                userId: newUrl.userId,
+                messageId: newUrl.messageId
+            });
+            logWithTimestamp(`Added URL: ${newUrl.url}`, 'INFO');
+            addedCount++;
+        }
+
+        if (addedCount > 0) {
+            updatedUrls.sort((a, b) => b.timestamp - a.timestamp);
+            this.urls.set(channelId, updatedUrls);
+            
+            const urlData = Object.fromEntries(this.urls);
+            await fs.writeFile(this.storageFile, JSON.stringify(urlData, null, 2));
+            
+            logWithTimestamp(`Saved ${addedCount} URLs for channel ${channelId}`, 'INFO');
+        }
+        
+        return addedCount;
+    } catch (error) {
+        logWithTimestamp(`Error saving URLs: ${error.message}`, 'ERROR');
+        return 0;
+    }
+}
+
+    async addUrl(url, userId, channelId, threadId = null, messageId, author = 'Unknown') {
         if (!this.isInitialized) {
             logWithTimestamp('URL storage not initialized', 'ERROR');
             return null;
@@ -135,13 +124,13 @@ class UrlStorage {
             channelId,
             threadId,
             messageId,
-            messageUrl,
+            author,
             timestamp: Date.now()
         };
 
         const addedCount = await this.saveUrls(channelId, [urlEntry]);
         if (addedCount > 0) {
-            logWithTimestamp(`Added URL: ${trimmedUrl} by user ID ${userId}`, 'INFO');
+            logWithTimestamp(`Added URL: ${trimmedUrl} by ${author}`, 'INFO');
             return urlEntry;
         }
         return null;
@@ -226,7 +215,6 @@ class UrlStorage {
         return stats;
     }
 
-0
     shutdown() {
         logWithTimestamp('URL storage shutting down', 'SHUTDOWN');
     }
