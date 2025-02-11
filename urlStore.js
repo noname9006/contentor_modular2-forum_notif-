@@ -10,29 +10,36 @@ class UrlStorage {
     }
 
     async init() {
-        try {
-            const mainChannelId = process.env.MAIN_CHANNEL_ID;
-            if (!mainChannelId) {
-                throw new Error('MAIN_CHANNEL_ID environment variable is not set');
-            }
-
-            this.storageFile = path.join(__dirname, `URL_DB_${mainChannelId}.json`);
-            
-            const data = await fs.readFile(this.storageFile, 'utf8').catch(() => '{}');
-            const urlData = JSON.parse(data);
-            
-            for (const [channelId, urls] of Object.entries(urlData)) {
-                this.urls.set(channelId, urls);
-            }
-            
-            this.isInitialized = true;
-            logWithTimestamp('URL storage initialized', 'STARTUP');
-        } catch (error) {
-            logWithTimestamp(`Error initializing URL storage: ${error.message}`, 'ERROR');
-            this.urls = new Map();
-            this.isInitialized = false;
+    try {
+        const mainChannelId = process.env.MAIN_CHANNEL_ID;
+        if (!mainChannelId) {
+            throw new Error('MAIN_CHANNEL_ID environment variable is not set');
         }
+
+        this.storageFile = path.join(__dirname, `URL_DB_${mainChannelId}.json`);
+        
+        // Test write permissions
+        await fs.access(path.dirname(this.storageFile), fs.constants.W_OK)
+            .catch(() => {
+                throw new Error(`No write permission to directory: ${path.dirname(this.storageFile)}`);
+            });
+            
+        const data = await fs.readFile(this.storageFile, 'utf8').catch(() => '{}');
+        const urlData = JSON.parse(data);
+        
+        for (const [channelId, urls] of Object.entries(urlData)) {
+            this.urls.set(channelId, urls);
+        }
+        
+        this.isInitialized = true;
+        logWithTimestamp(`URL storage initialized at ${this.storageFile}`, 'STARTUP');
+    } catch (error) {
+        logWithTimestamp(`Error initializing URL storage: ${error.message}`, 'ERROR');
+        this.urls = new Map();
+        this.isInitialized = false;
+        throw error;  // Propagate the error
     }
+}
 
     // Helper method to check for duplicates across all channels
     isDuplicateUrl(url) {

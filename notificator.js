@@ -281,7 +281,7 @@ async function handleFetchLinksCommand(message) {
         let urls = [];
         try {
             // First get stored URLs
-            const storedUrls = await urlStore.getUrls(channelId);  // Added await here
+            const storedUrls = await urlStore.getUrls(channelId);
             urls = [...storedUrls];
 
             // Then fetch new URLs
@@ -293,12 +293,17 @@ async function handleFetchLinksCommand(message) {
                     messages.forEach(msg => {
                         const foundUrls = msg.content.match(urlTracker.urlRegex);
                         if (foundUrls) {
+                            const messageUrl = `https://discord.com/channels/${msg.guild.id}/${msg.channel.id}/${msg.id}`;
                             foundUrls.forEach(url => {
                                 urls.push({
                                     url,
                                     timestamp: msg.createdTimestamp,
+                                    userId: msg.author.id,
                                     author: msg.author.tag,
-                                    threadName: thread.name
+                                    threadName: thread.name,
+                                    messageId: msg.id,
+                                    messageUrl: messageUrl,
+                                    channelId: msg.channel.id
                                 });
                             });
                         }
@@ -309,11 +314,16 @@ async function handleFetchLinksCommand(message) {
                 messages.forEach(msg => {
                     const foundUrls = msg.content.match(urlTracker.urlRegex);
                     if (foundUrls) {
+                        const messageUrl = `https://discord.com/channels/${msg.guild.id}/${msg.channel.id}/${msg.id}`;
                         foundUrls.forEach(url => {
                             urls.push({
                                 url,
                                 timestamp: msg.createdTimestamp,
-                                author: msg.author.tag
+                                userId: msg.author.id,
+                                author: msg.author.tag,
+                                messageId: msg.id,
+                                messageUrl: messageUrl,
+                                channelId: msg.channel.id
                             });
                         });
                     }
@@ -326,8 +336,22 @@ async function handleFetchLinksCommand(message) {
                     index === self.findIndex((t) => t.url === url.url))
                 .sort((a, b) => b.timestamp - a.timestamp);
 
-            // Save updated URLs
-            await urlStore.saveUrls(channelId, urls);
+            // Save updated URLs with retries
+            let saved = false;
+            let retries = 3;
+            while (!saved && retries > 0) {
+                try {
+                    await urlStore.saveUrls(channelId, urls);
+                    saved = true;
+                    logWithTimestamp(`Successfully saved ${urls.length} URLs for channel ${channelId}`, 'INFO');
+                } catch (error) {
+                    retries--;
+                    if (retries === 0) {
+                        throw error;
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
 
             if (urls.length === 0) {
                 await message.reply('No URLs found in this channel.');
@@ -337,8 +361,13 @@ async function handleFetchLinksCommand(message) {
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
                 .setTitle('URLs fetched')
-                .setDescription(`Found ${urls.length} URLs in channel:\n ${channelId}`)
-                
+                .setDescription(`Found and saved ${urls.length} URLs in channel: ${channelId}`)
+                .addFields(
+                    { 
+                        name: 'Storage Status', 
+                        value: saved ? '✅ URLs saved successfully' : '❌ Failed to save URLs'
+                    }
+                )
                 .setFooter({
                     text: 'Botanix Labs',
                     iconURL: 'https://a-us.storyblok.com/f/1014909/512x512/026e26392f/dark_512-1.png'
@@ -346,7 +375,7 @@ async function handleFetchLinksCommand(message) {
                 .setTimestamp();
 
             await message.reply({ embeds: [embed] });
-            logWithTimestamp(`Fetched ${urls.length} URLs from channel ${channelId}`, 'INFO');
+            logWithTimestamp(`Fetched and saved ${urls.length} URLs from channel ${channelId}`, 'INFO');
         } catch (error) {
             logWithTimestamp(`Error fetching URLs: ${error.message}`, 'ERROR');
             await message.reply('An error occurred while fetching URLs.');
