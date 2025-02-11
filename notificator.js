@@ -336,14 +336,9 @@ async function handleFetchLinksCommand(message) {
 
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
-                .setTitle('URL History')
-                .setDescription(`Found ${urls.length} URLs in channel`)
-                .addFields(
-                    urls.slice(0, URL_HISTORY_LIMIT).map(url => ({
-                        name: `${new Date(url.timestamp).toLocaleString()} by ${url.author}${url.threadName ? ` in ${url.threadName}` : ''}`,
-                        value: `${url.url.substring(0, 100)}${url.url.length > 100 ? '...' : ''}`
-                    }))
-                )
+                .setTitle('URLs fetched')
+                .setDescription(`Found ${urls.length} URLs in channel:\n ${channelId}`)
+                
                 .setFooter({
                     text: 'Botanix Labs',
                     iconURL: 'https://a-us.storyblok.com/f/1014909/512x512/026e26392f/dark_512-1.png'

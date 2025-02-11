@@ -34,13 +34,11 @@ class UrlTracker {
                     // Different author - not allowed
                     const embed = new EmbedBuilder()
                         .setColor('#ff0000')
-                        .setTitle('Only your own content is allowed')
-                        .setDescription(`This URL was previously shared by another user on <t:${Math.floor(new Date(existingUrl.timestamp).getTime() / 1000)}:R>`)
+                        .setTitle("Please don't try to use others content as your own")
+                        .setDescription(`This content has already been shared by another user`)
                         .addFields(
-                            { name: 'Original Poster', value: existingUrl.author || 'Unknown' },
-                            { name: 'Original Channel', value: `<#${existingUrl.channelId}>` },
-                            { name: 'URL', value: url }
-                        )
+                         { name: 'Original Message:', value: ` ` },
+                         )                       
                         .setFooter({
                             text: 'Botanix Labs',
                             iconURL: 'https://a-us.storyblok.com/f/1014909/512x512/026e26392f/dark_512-1.png'
@@ -56,11 +54,8 @@ class UrlTracker {
                         const embed = new EmbedBuilder()
                             .setColor('#ff0000')
                             .setTitle('You have posted this before')
-                            .setDescription(`You shared this URL in a different thread on <t:${Math.floor(new Date(existingUrl.timestamp).getTime() / 1000)}:R>`)
-                            .addFields(
-                                { name: 'Original Thread', value: `<#${existingUrl.channelId}>` },
-                                { name: 'URL', value: url }
-                            )
+                            .setDescription(`You have already shared this content`)
+                            
                             .setFooter({
                                 text: 'Botanix Labs',
                                 iconURL: 'https://a-us.storyblok.com/f/1014909/512x512/026e26392f/dark_512-1.png'
@@ -80,11 +75,8 @@ class UrlTracker {
                             const embed = new EmbedBuilder()
                                 .setColor('#ff0000')
                                 .setTitle('You have posted this before')
-                                .setDescription(`You already shared this URL in this thread on <t:${Math.floor(new Date(existingUrl.timestamp).getTime() / 1000)}:R>`)
-                                .addFields(
-                                    { name: 'Original Message', value: `[Click to view](${originalMessage.url})` },
-                                    { name: 'URL', value: url }
-                                )
+                                .setDescription(`You have already shared this content`)
+                                
                                 .setFooter({
                                     text: 'Botanix Labs',
                                     iconURL: 'https://a-us.storyblok.com/f/1014909/512x512/026e26392f/dark_512-1.png'
