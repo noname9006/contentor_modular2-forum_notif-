@@ -21,7 +21,7 @@ const ERROR_COLOR = '#f2b518';
 const RATE_LIMIT_COOLDOWN = 1000;
 const AUTO_DELETE_TIMER_SECONDS = parseInt(process.env.AUTO_DELETE_TIMER) || 30;
 const AUTO_DELETE_TIMER = AUTO_DELETE_TIMER_SECONDS * 1000;
-const URL_CHECK_TIMEOUT = 5000; // 5 seconds timeout before URL check
+const URL_CHECK_TIMEOUT = parseInt(process.env.URL_CHECK_TIMEOUT) || 5000;
 const MAX_FETCH_RETRIES = 3;
 const CACHE_CLEANUP_INTERVAL = 300000; // 5 minutes
 const THREAD_CACHE_TTL = 3600000; // 1 hour
@@ -33,14 +33,20 @@ const threadNameCache = new Map(); // Stores {threadId: {name: string, timestamp
 
 function checkRateLimit(userId) {
     const now = Date.now();
-    const userRateLimit = rateLimitMap.get(userId);
+    const userRateLimit = rateLimitMap.get(userId) || { timestamp: now, count: 0 };
     
-    if (userRateLimit && now - userRateLimit < RATE_LIMIT_COOLDOWN) {
-        logWithTimestamp(`Rate limit hit for user ID: ${userId}`, 'RATELIMIT');
-        return true;
+    if (now - userRateLimit.timestamp > RATE_LIMIT_COOLDOWN) {
+        userRateLimit.timestamp = now;
+        userRateLimit.count = 1;
+    } else {
+        userRateLimit.count++;
+        if (userRateLimit.count > RATE_LIMIT_MAX_REQUESTS) {
+            logWithTimestamp(`Rate limit hit for user ID: ${userId}`, 'RATELIMIT');
+            return true;
+        }
     }
     
-    rateLimitMap.set(userId, now);
+    rateLimitMap.set(userId, userRateLimit);
     return false;
 }
 
@@ -427,7 +433,7 @@ client.once('ready', async () => {
     }
 });
 
-client.on('messageCreate', async (message) => {
+client.on(' ', async (message) => {
     try {
         if (message.author.bot || !message.guild || !message.member) return;
 
@@ -468,14 +474,22 @@ client.on('messageCreate', async (message) => {
                     if (messageExists) {
                         await urlTracker.handleUrlMessage(message, urls);
                         
-                        // Store URLs in the storage
                         const urlsToStore = urls.map(url => ({
-                            url,
-                            timestamp: message.createdTimestamp,
-                            author: message.author.tag,
-                            threadName: message.channel.name
-                        }));
-                        await urlStore.saveUrls(message.channel.id, urlsToStore);
+    url,
+    timestamp: message.createdTimestamp,
+    author: message.author.tag,
+    authorId: message.author.id,
+    threadName: message.channel.name,
+    threadId: message.channel.id,
+    messageId: message.id,
+    guildId: message.guild.id
+}));
+try {
+    await urlStore.saveUrls(message.channel.id, urlsToStore);
+} catch (error) {
+    logWithTimestamp(`Failed to store URLs: ${error.message}`, 'ERROR');
+    // Implement retry mechanism or queue for later processing
+}
                     } else {
                         logWithTimestamp(`Message ${message.id} no longer exists, skipping URL check`, 'INFO');
                     }
@@ -498,9 +512,13 @@ process.on('uncaughtException', error => {
     process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-    logWithTimestamp(`Unhandled rejection: ${reason}`, 'FATAL');
-    process.exit(1);
+process.on('unhandledRejection', async (reason, promise) => {
+    logWithTimestamp(`Unhandled rejection: ${reason}`, 'ERROR');
+    try {
+        await promise;
+    } catch (error) {
+        logWithTimestamp(`Failed to handle rejection: ${error}`, 'ERROR');
+    }
 });
 
 process.on('SIGINT', () => {

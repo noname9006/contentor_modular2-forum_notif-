@@ -11,14 +11,21 @@ class UrlTracker {
     }
 
     async init() {
-        try {
-            await this.urlStore.init();
-            logWithTimestamp('URL Tracker initialized successfully', 'INFO');
-        } catch (error) {
-            logWithTimestamp(`Failed to initialize URL Tracker: ${error.message}`, 'ERROR');
-            throw error;
+    try {
+        await this.urlStore.init();
+        
+        // Sync with all channels in storage
+        const channelIds = await this.urlStore.getAllChannelIds();
+        for (const channelId of channelIds) {
+            await this.syncWithStorage(channelId);
         }
+        
+        logWithTimestamp('URL Tracker initialized successfully', 'INFO');
+    } catch (error) {
+        logWithTimestamp(`Failed to initialize URL Tracker: ${error.message}`, 'ERROR');
+        throw error;
     }
+}
 
     async handleUrlMessage(message, urls) {
     try {
