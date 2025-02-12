@@ -3,7 +3,7 @@ const { Client, GatewayIntentBits, EmbedBuilder, Partials, ChannelType } = requi
 const UrlStorage = require('./urlStore');  // Changed to UrlStorage
 const UrlTracker = require('./urlTracker');
 const { logWithTimestamp } = require('./utils');
-const { DB_TIMEOUT } = require('./config');
+const { DB_TIMEOUT, RATE_LIMIT_MAX_REQUESTS, RATE_LIMIT_COOLDOWN } = require('./config');
 
 const client = new Client({
     intents: [
@@ -18,7 +18,6 @@ const client = new Client({
 // Constants
 const MAX_TEXT_LENGTH = 200;
 const ERROR_COLOR = '#f2b518';
-const RATE_LIMIT_COOLDOWN = 1000;
 const AUTO_DELETE_TIMER_SECONDS = parseInt(process.env.AUTO_DELETE_TIMER) || 30;
 const AUTO_DELETE_TIMER = AUTO_DELETE_TIMER_SECONDS * 1000;
 const URL_CHECK_TIMEOUT = parseInt(process.env.URL_CHECK_TIMEOUT) || 5000;
@@ -433,7 +432,7 @@ client.once('ready', async () => {
     }
 });
 
-client.on(' ', async (message) => {
+client.on('messageCreate', async (message) => {
     try {
         if (message.author.bot || !message.guild || !message.member) return;
 
