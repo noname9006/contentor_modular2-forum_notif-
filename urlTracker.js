@@ -10,22 +10,34 @@ class UrlTracker {
         this.urlRegex = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/g;
     }
 
-    async init() {
-    try {
-        await this.urlStore.init();
-        
-        // Sync with all channels in storage
-        const channelIds = await this.urlStore.getAllChannelIds();
-        for (const channelId of channelIds) {
-            await this.syncWithStorage(channelId);
+    async syncWithStorage(channelId) {
+        try {
+            const urls = await this.fetchAllUrlsFromChannel(channelId);
+            if (urls.length > 0) {
+                await this.urlStore.saveUrls(channelId, urls);
+                logWithTimestamp(`Synced ${urls.length} URLs for channel ${channelId}`, 'INFO');
+            }
+        } catch (error) {
+            logWithTimestamp(`Error syncing channel ${channelId}: ${error.message}`, 'ERROR');
         }
-        
-        logWithTimestamp('URL Tracker initialized successfully', 'INFO');
-    } catch (error) {
-        logWithTimestamp(`Failed to initialize URL Tracker: ${error.message}`, 'ERROR');
-        throw error;
     }
-}
+
+    async init() {
+        try {
+            await this.urlStore.init();
+            
+            // Sync with all channels in storage
+            const channelIds = await this.urlStore.getAllChannelIds();
+            for (const channelId of channelIds) {
+                await this.syncWithStorage(channelId);
+            }
+            
+            logWithTimestamp('URL Tracker initialized successfully', 'INFO');
+        } catch (error) {
+            logWithTimestamp(`Failed to initialize URL Tracker: ${error.message}`, 'ERROR');
+            throw error;
+        }
+    }
 
     async handleUrlMessage(message, urls) {
     try {
