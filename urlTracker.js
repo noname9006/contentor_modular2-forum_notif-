@@ -34,7 +34,7 @@ class UrlTracker {
                     // Different author - not allowed
                     const embed = new EmbedBuilder()
                         .setColor('#ff0000')
-                        .setTitle('Only your own content is allowed')
+                        .setTitle(`${message.author}, Only your own content is allowed`) // Added user mention in title
                         .setDescription(`This URL was previously shared by another user on <t:${Math.floor(new Date(existingUrl.timestamp).getTime() / 1000)}:R>`)
                         .addFields(
                             { name: 'Original Poster', value: existingUrl.author || 'Unknown' },
@@ -55,7 +55,7 @@ class UrlTracker {
                         // Different thread
                         const embed = new EmbedBuilder()
                             .setColor('#ff0000')
-                            .setTitle('You have posted this before')
+                            .setTitle(`${message.author}, You have posted this before`) // Added user mention in title
                             .setDescription(`You shared this URL in a different thread on <t:${Math.floor(new Date(existingUrl.timestamp).getTime() / 1000)}:R>`)
                             .addFields(
                                 { name: 'Original Thread', value: `<#${existingUrl.channelId}>` },
@@ -79,7 +79,7 @@ class UrlTracker {
                             // Original message still exists
                             const embed = new EmbedBuilder()
                                 .setColor('#ff0000')
-                                .setTitle('You have posted this before')
+                                .setTitle(`${message.author}, You have posted this before`) // Added user mention in title
                                 .setDescription(`You already shared this URL in this thread on <t:${Math.floor(new Date(existingUrl.timestamp).getTime() / 1000)}:R>`)
                                 .addFields(
                                     { name: 'Original Message', value: `[Click to view](${originalMessage.url})` },
